@@ -9,6 +9,10 @@ factor：INTEGER
 '''
 
 
+def error(msg='警告：错误的输入内容！'):  # 定义提示错误的方法
+    raise Exception(msg)  # 抛出异常
+
+
 class TokenType:
     INTEGER = 1
     STR = 2
@@ -23,8 +27,8 @@ class TokenType:
     ASS = 11
     VAR = 12
     VAL = 13
-    LPAR = 14
-    RPAR = 15
+    LPAREN = 14
+    RPAREN = 15
     EOF = 16
 
     OPERATORS = {"+": PLUS,
@@ -53,6 +57,23 @@ class Token:  # 定义记号类
 
     def __repr__(self):  # 也可以写成 __repr__=__str__
         return self.__str__()
+
+
+class AST:
+    pass
+
+
+class BinOp(AST):
+    def __init__(self, left, op, right):
+        self.left = left
+        self.token = self.op = op
+        self.right = right
+
+
+class Num(AST):
+    def __init__(self, token):
+        self.token = token
+        self.value = token.value
 
 
 class Lexer:
@@ -125,25 +146,98 @@ class Lexer:
 
     def get_next_token(self):  # 定义获取记号的方法
         while self.current_char is not None:  # 如果当前字符不是None值
-            if self.current_char.isspace():  # 如果当前字符是空格
+            current = self.current_char
+            if current.isspace():  # 如果当前字符是空格
                 self.skip_whitespace()  # 跳过所有空格
                 continue
 
-            if self.current_char in ('\'', '"'):  # 如果当前字符是字符串
+            if current in ('\'', '"'):  # 如果当前字符是字符串
                 return Token(TokenType.VAL, self.string())  # 获取完整的字符串创建记号对象并返回
 
-            if self.current_char.isdigit():  # 如果当前字符是整数
+            if current.isdigit():  # 如果当前字符是整数
                 return Token(TokenType.VAL, self.integer())  # 获取完整的数字创建记号对象并返回
 
-            if self.current_char.isalpha():  # 如果不是字符串但是以字母开头，那就是一个变量
+            if current.isalpha():  # 如果不是字符串但是以字母开头，那就是一个变量
                 return Token(TokenType.VAR, self.variable())
 
-            if self.current_char in TokenType.OPERATORS:  # 如果当前字符是运算符号
+            if current == '(':
+                self.advance()
+                return Token(TokenType.LPAREN, '(')
+
+            if current == ')':
+                self.advance()
+                return Token(TokenType.RPAREN, ')')
+
+            if current in TokenType.OPERATORS:  # 如果当前字符是运算符号
                 operator = self.operator()
                 return Token(TokenType.OPERATORS[operator], operator)  # 创建记号对象并返回
 
             self.error()  # 如果以上都不是，则抛出异常。
         return Token(TokenType.EOF, None)  # 遍历结束返回结束标识创建的记号对象
+
+
+class Parser:
+    def __init__(self, lexer):  # 定义构造方法获取用户输入的表达式
+        self.lexer = lexer
+        self.current_token = self.lexer.get_next_token()
+
+    def _eat(self, *token_types):  # 判断如果记号中的值类型符合运算要求
+        if isinstance(token_types[0], dict):
+            if self.current_token.value not in token_types[0]:
+                error()
+            else:
+                self.current_token = self.lexer.get_next_token()
+        else:
+            if self.current_token.value_type not in token_types:
+                error()  # 抛出异常
+            else:
+                self.current_token = self.lexer.get_next_token()
+
+    def _term(self):
+        """
+        term : factor ((MUL | DIV) factor)*
+        """
+        result = self._factor()  # 获取第1个整数（factor）
+        while self.current_token.value_type in (TokenType.MUL, TokenType.DIV):
+            operator = self.current_token
+            self._eat(TokenType.OPERATORS)
+            result = BinOp(result, operator, self._factor())
+        return result
+
+    def _factor(self):
+        token = self.current_token
+        if token.value_type in (TokenType.VAR, TokenType.VAL):
+            self._eat(TokenType.VAR, TokenType.VAL)  # 调用验证方法传入运算要求的类型
+            return Num(token)
+        elif token.value_type == TokenType.LPAREN:  # 处理括号内表达式
+            self._eat(TokenType.LPAREN)  # 验证左括号
+            result = self._expr()  # 计算括号内的表达式
+            self._eat(TokenType.RPAREN)  # 验证右括号
+            return result  # 返回括号内表达式的值
+
+    def _expr(self):  # 定义验证运算结构并计算结果的方法
+        result = self._term()  # 获取第一段乘除或者第一数字
+        while self.current_token.value_type in (TokenType.PLUS,
+                                                TokenType.PEQ,
+                                                TokenType.MINUS,
+                                                TokenType.MEQ,
+                                                TokenType.MULEQ,
+                                                TokenType.DEQ,
+                                                TokenType.ASS):
+            operator = self.current_token
+            self._eat(TokenType.OPERATORS)
+
+            if operator.value_type in (TokenType.PLUS, TokenType.MINUS):
+                # 先算term, 也就是先乘除
+                result = BinOp(result, operator, self._term())
+            else:
+                # 如果有赋值操作, 递归完成
+                result = BinOp(result, operator, self._expr())
+
+        return result  # 返回计算结果
+
+    def parse(self):
+        return self._expr()
 
 
 class Interpreter:  # 定义解释器类
@@ -157,21 +251,17 @@ class Interpreter:  # 定义解释器类
                  TokenType.DIV: lambda a, b: Interpreter.getVal(a) / Interpreter.getVal(b),
                  TokenType.DEQ: lambda a, b: Interpreter.assignToVar(a, Interpreter.getVal(a) / Interpreter.getVal(b)),
                  TokenType.MUL: lambda a, b: Interpreter.getVal(a) * Interpreter.getVal(b),
-                 TokenType.MULEQ: lambda a, b: Interpreter.assignToVar(a, Interpreter.getVal(a) * Interpreter.getVal(b)),
+                 TokenType.MULEQ: lambda a, b: Interpreter.assignToVar(a,
+                                                                       Interpreter.getVal(a) * Interpreter.getVal(b)),
                  TokenType.ASS: lambda a, b: Interpreter.assignToVar(a, Interpreter.getVal(b))}
 
-    def __init__(self, lexer):  # 定义构造方法获取用户输入的表达式
-        self.lexer = lexer
-        self.current_token = self.lexer.get_next_token()
+    def __init__(self, parser):
+        self.parser = parser
 
     @classmethod
     def assignToVar(cls, var, value):  # 变量赋值
         cls.VARIABLES[var.value] = value
         return value
-
-    @classmethod
-    def error(cls, msg='警告：错误的输入内容！'):  # 定义提示错误的方法
-        raise Exception(msg)  # 抛出异常
 
     @classmethod
     def getVal(cls, token):  # 如果是变量, 就取出它的值。 否则直接返回
@@ -180,66 +270,32 @@ class Interpreter:  # 定义解释器类
                 try:
                     return cls.VARIABLES[token.value]
                 except:
-                    cls.error(f"变量 {token.value} 不存在！")
+                    error(f"变量 {token.value} 不存在！")
 
             return token.value
         else:
             return token
 
-    def execute(self, left, right, operator):
-        # 执行运算
-        return Token(TokenType.VAL, self.OPERATION[operator.value_type](left, right))
+    def visit(self, node):
+        # 获取节点类型名称组成访问器方法名（子类Interpreter中方法的名称）
+        method_name = 'visit_' + type(node).__name__
+        # 获取访问器对象，找不到访问器时获取“generic_visit”
+        try:
+            visitor = getattr(self, method_name, self.generic_visit)
+            return visitor(node)
+        except:
+            return node.token
 
-    def eat(self, *token_types):  # 判断如果记号中的值类型符合运算要求
-        if isinstance(token_types[0], dict):
-            if self.current_token.value not in token_types[0]:
-                self.error()
-            else:
-                self.current_token = self.lexer.get_next_token()
-        else:
-            if self.current_token.value_type not in token_types:
-                self.error()  # 抛出异常
-            else:
-                self.current_token = self.lexer.get_next_token()
+    def generic_visit(self, node):
+        raise Exception('No visit_{} method'.format(type(node).__name__))
 
-    def term(self):
-        result = self.factor()  # 获取第1个整数（factor）
-        while self.current_token.value_type in (TokenType.MUL, TokenType.DIV):
-            operator = self.current_token
-            self.eat(TokenType.OPERATORS)
-            result = self.execute(result, self.factor(), operator)
-        return result
+    def visit_BinOp(self, node):  # 访问二元运算符类型节点的方法
+        return self.OPERATION[node.token.value_type](self.visit(node.left),
+                                                     self.visit(node.right))
 
-    def factor(self):
-        token = self.current_token
-        self.eat(TokenType.VAR, TokenType.VAL)  # 调用验证方法传入运算要求的类型
-        return token
-
-    def priorityTerm(self):
-        if self.current_token == '(':
-            return True, self.factor()
-        return False, self.factor()
-
-    def expr(self):  # 定义验证运算结构并计算结果的方法
-        result = self.term()  # 获取第一段乘除或者第一数字
-        while self.current_token.value_type in (TokenType.PLUS,
-                                                TokenType.PEQ,
-                                                TokenType.MINUS,
-                                                TokenType.MEQ,
-                                                TokenType.MULEQ,
-                                                TokenType.DEQ,
-                                                TokenType.ASS):
-            operator = self.current_token
-            self.eat(TokenType.OPERATORS)
-
-            if operator.value_type in (TokenType.PLUS, TokenType.MINUS):
-                # 先算term, 也就是先乘除
-                result = self.execute(result, self.term(), operator)
-            else:
-                # 如果有赋值操作, 递归完成
-                result = self.execute(result, self.expr(), operator)
-
-        return self.getVal(result)  # 返回计算结果
+    def interpret(self):  # 执行解释的方法
+        tree = self.parser.parse()  # 获取语法分析器分析后的树对象
+        return self.getVal(self.visit(tree))  # 返回访问语法树最终的遍历结果
 
 
 def main():
@@ -251,8 +307,9 @@ def main():
         if not text:  # 如果未输入时继续提示输入
             continue
         lexer = Lexer(text)
-        interpreter = Interpreter(lexer)  # 实例化解释器对象
-        result = interpreter.expr()  # 执行运算方法获取运算结果
+        parser = Parser(lexer)
+        interpreter = Interpreter(parser)  # 实例化解释器对象
+        result = interpreter.interpret()  # 执行运算方法获取运算结果
         if result is not None:
             print(result)  #
 
