@@ -1,5 +1,11 @@
 '''
 变量创建/使用 & 加减乘除的简单运算
+
+expr：term((PLUS|MINUS)term)*
+
+term：factor((MUL|DIV)factor)*
+
+factor：INTEGER
 '''
 
 
@@ -7,15 +13,29 @@ class TokenType:
     INTEGER = 1
     STR = 2
     PLUS = 3
-    MINUS = 4
-    MUL = 5
-    DIV = 6
-    ASS = 7
-    VAR = 8
-    VAL = 9
-    EOF = 10
+    PEQ = 4
+    MINUS = 5
+    MEQ = 6
+    MUL = 7
+    MULEQ = 8
+    DIV = 9
+    DEQ = 10
+    ASS = 11
+    VAR = 12
+    VAL = 13
+    LPAR = 14
+    RPAR = 15
+    EOF = 16
 
-    OPERATORS = {"+": PLUS, "-": MINUS, "/": DIV, "*": MUL, "=": ASS}
+    OPERATORS = {"+": PLUS,
+                 "+=": PEQ,
+                 "-": MINUS,
+                 "-=": MEQ,
+                 "/": DIV,
+                 "/=": DEQ,
+                 "*": MUL,
+                 "*=": MULEQ,
+                 "=": ASS}
 
     @classmethod
     def toType(cls, token):
@@ -125,14 +145,19 @@ class Lexer:
             self.error()  # 如果以上都不是，则抛出异常。
         return Token(TokenType.EOF, None)  # 遍历结束返回结束标识创建的记号对象
 
+
 class Interpreter:  # 定义解释器类
     VARIABLES = {}  # 变量表
 
     # 运算算法lambda
     OPERATION = {TokenType.PLUS: lambda a, b: Interpreter.getVal(a) + Interpreter.getVal(b),
+                 TokenType.PEQ: lambda a, b: Interpreter.assignToVar(a, Interpreter.getVal(a) + Interpreter.getVal(b)),
                  TokenType.MINUS: lambda a, b: Interpreter.getVal(a) - Interpreter.getVal(b),
+                 TokenType.MEQ: lambda a, b: Interpreter.assignToVar(a, Interpreter.getVal(a) - Interpreter.getVal(b)),
                  TokenType.DIV: lambda a, b: Interpreter.getVal(a) / Interpreter.getVal(b),
+                 TokenType.DEQ: lambda a, b: Interpreter.assignToVar(a, Interpreter.getVal(a) / Interpreter.getVal(b)),
                  TokenType.MUL: lambda a, b: Interpreter.getVal(a) * Interpreter.getVal(b),
+                 TokenType.MULEQ: lambda a, b: Interpreter.assignToVar(a, Interpreter.getVal(a) * Interpreter.getVal(b)),
                  TokenType.ASS: lambda a, b: Interpreter.assignToVar(a, Interpreter.getVal(b))}
 
     def __init__(self, lexer):  # 定义构造方法获取用户输入的表达式
@@ -161,7 +186,6 @@ class Interpreter:  # 定义解释器类
         else:
             return token
 
-
     def execute(self, left, right, operator):
         # 执行运算
         return Token(TokenType.VAL, self.OPERATION[operator.value_type](left, right))
@@ -178,26 +202,42 @@ class Interpreter:  # 定义解释器类
             else:
                 self.current_token = self.lexer.get_next_token()
 
+    def term(self):
+        result = self.factor()  # 获取第1个整数（factor）
+        while self.current_token.value_type in (TokenType.MUL, TokenType.DIV):
+            operator = self.current_token
+            self.eat(TokenType.OPERATORS)
+            result = self.execute(result, self.factor(), operator)
+        return result
 
     def factor(self):
-        term = self.current_token
+        token = self.current_token
         self.eat(TokenType.VAR, TokenType.VAL)  # 调用验证方法传入运算要求的类型
-        return term
+        return token
+
+    def priorityTerm(self):
+        if self.current_token == '(':
+            return True, self.factor()
+        return False, self.factor()
 
     def expr(self):  # 定义验证运算结构并计算结果的方法
-        start = self.factor()
-        result = start
-        while self.current_token.value_type != TokenType.EOF:
-            operator = self.current_token  # 保存第2个记号到变量
-            if operator.value_type in (TokenType.ASS, TokenType.PLUS, TokenType.MINUS):
-                self.eat(TokenType.OPERATORS)  # 调用验证方法传入运算要求的类型
+        result = self.term()  # 获取第一段乘除或者第一数字
+        while self.current_token.value_type in (TokenType.PLUS,
+                                                TokenType.PEQ,
+                                                TokenType.MINUS,
+                                                TokenType.MEQ,
+                                                TokenType.MULEQ,
+                                                TokenType.DEQ,
+                                                TokenType.ASS):
+            operator = self.current_token
+            self.eat(TokenType.OPERATORS)
+
+            if operator.value_type in (TokenType.PLUS, TokenType.MINUS):
+                # 先算term, 也就是先乘除
+                result = self.execute(result, self.term(), operator)
+            else:
+                # 如果有赋值操作, 递归完成
                 result = self.execute(result, self.expr(), operator)
-                break
-
-            self.eat(TokenType.OPERATORS)  # 调用验证方法传入运算要求的类型
-
-            # 乘除法 直接算， 加减法就递归
-            result = self.execute(result, self.factor(), operator)
 
         return self.getVal(result)  # 返回计算结果
 
