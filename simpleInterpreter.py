@@ -76,6 +76,12 @@ class Num(AST):
         self.value = token.value
 
 
+class UnaryOp(AST):
+    def __init__(self, op, expr):
+        self.token = self.op = op
+        self.expr = expr
+
+
 class Lexer:
     def __init__(self, text):
         self.text = text  # 用户输入的表达式
@@ -140,6 +146,8 @@ class Lexer:
     def operator(self):
         result = ''
         while self.current_char in TokenType.OPERATORS:
+            if result and self.current_char != '=':
+                return result
             result += self.current_char
             self.advance()
         return result
@@ -214,6 +222,9 @@ class Parser:
             result = self._expr()  # 计算括号内的表达式
             self._eat(TokenType.RPAREN)  # 验证右括号
             return result  # 返回括号内表达式的值
+        elif token.value_type in (TokenType.PLUS, TokenType.MINUS):
+            self._eat(TokenType.OPERATORS)
+            return UnaryOp(token, self._factor())
 
     def _expr(self):  # 定义验证运算结构并计算结果的方法
         result = self._term()  # 获取第一段乘除或者第一数字
@@ -284,7 +295,7 @@ class Interpreter:  # 定义解释器类
             visitor = getattr(self, method_name, self.generic_visit)
             return visitor(node)
         except:
-            return node.token
+            return node.token.value
 
     def generic_visit(self, node):
         raise Exception('No visit_{} method'.format(type(node).__name__))
@@ -292,6 +303,13 @@ class Interpreter:  # 定义解释器类
     def visit_BinOp(self, node):  # 访问二元运算符类型节点的方法
         return self.OPERATION[node.token.value_type](self.visit(node.left),
                                                      self.visit(node.right))
+
+    def visit_UnaryOp(self, node):
+        op = node.op.value_type
+        if op == TokenType.PLUS:
+            return self.visit(node.expr)
+        elif op == TokenType.MINUS:
+            return -self.visit(node.expr)
 
     def interpret(self):  # 执行解释的方法
         tree = self.parser.parse()  # 获取语法分析器分析后的树对象
